@@ -12,61 +12,93 @@ import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.metrics.ContextFactory;
+import org.apache.hadoop.metrics.MetricsException;
 import org.apache.hadoop.metrics.spi.AbstractMetricsContext;
 import org.apache.hadoop.metrics.spi.OutputRecord;
-import org.apache.log4j.Logger;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 
 public class HBaseMetricsContext extends AbstractMetricsContext {
-  private static final Logger log = Logger.getLogger(HBaseMetricsContext.class);
 
   private String TABLE_NAME_PROPERTY = "tableName";
+  private String PERIOD_PROPERTY = "period";
   private HTable table;
 
   public HBaseMetricsContext() {
     super();
   }
 
-  synchronized public void init() throws IOException {
-    if (table == null) {
-      String tableName = getAttribute(TABLE_NAME_PROPERTY);
-      this.table = new HTable(HBaseConfiguration.create(), tableName);
+  @Override
+  public void init(String contextName, ContextFactory contextfactory) {
+    super.init(contextName, contextfactory);
+    String periodStr = getAttribute(PERIOD_PROPERTY);
+    if (periodStr != null) {
+      int period = 0;
+      try {
+        period = Integer.parseInt(periodStr);
+      } catch (NumberFormatException nfe) {
+      }
+      if (period <= 0) {
+        throw new MetricsException("Invalid period: " + periodStr);
+      }
+      setPeriod(period);
     }
+  }
+
+  private HTable getTable() throws MetricsException {
+    try {
+      if (table == null) {
+        String tableName = getAttribute(TABLE_NAME_PROPERTY);
+        if (tableName == null) {
+          throw new MetricsException("tableName not set for metrics context");
+        }
+        table = new HTable(HBaseConfiguration.create(), tableName);
+      }
+    } catch (IOException e) {
+      throw new MetricsException(e.getMessage());
+    }
+    return table;
   }
 
   @Override
   protected void emitRecord(String context, String record, OutputRecord outputrecord) throws IOException {
-    Put put = null;
-    try {
-      init();
+    HTable table = getTable();
+    if (table == null) {
+      return;
+    }
 
-      long timestamp = System.currentTimeMillis();
-      byte[] family = Bytes.toBytes(context + "." + record);
+    long timestamp = System.currentTimeMillis();
+    byte[] family = Bytes.toBytes(context + "." + record);
 
-      ByteArrayOutputStream row = new ByteArrayOutputStream();
-      // Most recent records will be at the beginning of scans.
-      row.write(Bytes.toBytes(Long.MAX_VALUE - timestamp));
-      // Add the tags to disambiguate records
-      for (String tagName : outputrecord.getTagNames()) {
-        row.write(Bytes.toBytes(tagName));
-        row.write(Bytes.toBytes(outputrecord.getTag(tagName).toString()));
-      }
-      put = new Put(row.toByteArray(), timestamp);
+    ByteArrayOutputStream row = new ByteArrayOutputStream();
+    // Most recent records will be at the beginning of scans.
+    row.write(Bytes.toBytes(Long.MAX_VALUE - timestamp));
+    // Add the tags to disambiguate records
+    for (String tagName : outputrecord.getTagNames()) {
+      row.write(Bytes.toBytes(tagName));
+      row.write(Bytes.toBytes(outputrecord.getTag(tagName).toString()));
+    }
 
-      for (String tagName : outputrecord.getTagNames()) {
-        put.add(family, Bytes.toBytes(tagName), Bytes.toBytes(outputrecord.getTag(tagName).toString()));
+    Put put = new Put(row.toByteArray(), timestamp);
+    for (String tagName : outputrecord.getTagNames()) {
+      put.add(family, Bytes.toBytes(tagName), Bytes.toBytes(outputrecord.getTag(tagName).toString()));
+    }
+    for (String metricName : outputrecord.getMetricNames()) {
+      put.add(family, Bytes.toBytes(metricName), Bytes.toBytes(outputrecord.getMetric(metricName).toString()));
+    }
+    table.put(put);
+  }
+
+  @Override
+  public void close() {
+    if (table != null) {
+      try {
+        table.close();
+      } catch (IOException e) {
+        e.printStackTrace();
       }
-      for (String metricName : outputrecord.getMetricNames()) {
-        put.add(family, Bytes.toBytes(metricName), Bytes.toBytes(outputrecord.getMetric(metricName).toString()));
-      }
-      table.put(put);
-    } catch (IOException e) {
-      if (log.isDebugEnabled()) {
-        log.debug(put.toString(), e);
-      }
-      throw e;
     }
   }
 }

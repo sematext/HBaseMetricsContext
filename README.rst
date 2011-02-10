@@ -1,7 +1,7 @@
 HBaseMetricsContext
 ===================
 
-This is an example of extending the Hadoop metrics framework. It stores Hadoop metrics in HBase. Since HBase itself uses the Hadoop metrics framework, you can use it to store it's own metrics inside itself. Useful? Maybe. This is just an example after all.
+This is an example of extending the Hadoop metrics framework. It stores Hadoop metrics in HBase. Since HBase itself uses the Hadoop metrics framework, you can use it to store its own metrics inside itself. Useful? Maybe. This is just an example after all.
 
 Build the project using:
 
